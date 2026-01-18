@@ -236,7 +236,6 @@ export default function App() {
       }
       if (!isDesktop) await startCamera();
       setStep('map-corners');
-      // On desktop, the map loads immediately in the boundary step.
       if (isDesktop) setTimeout(() => setIsMapReady(true), 1000);
     } catch (e) {
       if (!isDesktop) await startCamera();
@@ -461,7 +460,7 @@ export default function App() {
           
           <main ref={reportRef} className="flex-1 overflow-y-auto p-8 lg:p-12 space-y-12 pb-32 no-scrollbar max-w-6xl mx-auto w-full">
             <div className="glass p-16 rounded-[4rem] text-center relative overflow-hidden border-indigo-500/20 shadow-2xl bg-gradient-to-br from-indigo-500/5 to-transparent">
-              <div className="text-[10rem] font-black bg-gradient-to-b from-white to-slate-600 bg-clip-text text-transparent leading-none tracking-tighter">{report.overallScore}%</div>
+              <div className="text-[10rem] font-black bg-gradient-to-b from-white to-slate-600 bg-clip-text text-transparent leading-none tracking-tighter">{Number(report.overallScore)}%</div>
               <div className="text-xs uppercase tracking-[0.6em] text-slate-500 font-black mt-8">Holistic Compliance Score</div>
               <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-emerald-500 to-indigo-500" />
             </div>
@@ -471,7 +470,7 @@ export default function App() {
                   <Layers size={120} />
                </div>
               <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest mb-6">Expert Summary</h3>
-              <p className="text-slate-200 italic text-2xl leading-relaxed font-medium relative z-10">"{report.summary}"</p>
+              <p className="text-slate-200 italic text-2xl leading-relaxed font-medium relative z-10">"{String(report.summary)}"</p>
             </section>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -479,21 +478,21 @@ export default function App() {
                 <div key={idx} className="glass p-8 rounded-[3rem] border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col shadow-xl group">
                   <div className="flex justify-between items-start mb-6">
                     <div className="flex flex-col">
-                      <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-2">{item.floorName || 'Structure'}</span>
-                      <h4 className="font-black text-slate-100 uppercase text-xl italic tracking-tight group-hover:text-indigo-300 transition-colors">{item.roomType}</h4>
+                      <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-2">{String(item.floorName || 'Structure')}</span>
+                      <h4 className="font-black text-slate-100 uppercase text-xl italic tracking-tight group-hover:text-indigo-300 transition-colors">{String(item.roomType)}</h4>
                     </div>
                     <div className={`text-[10px] px-4 py-2 rounded-full font-black uppercase tracking-widest shadow-inner ${
                       item.status === 'Good' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
                       item.status === 'Fair' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 
                       'bg-red-500/10 text-red-400 border border-red-500/20'
                     }`}>
-                      {item.status}
+                      {String(item.status)}
                     </div>
                   </div>
-                  <p className="text-slate-400 text-sm leading-relaxed mb-8 font-medium">{item.observation}</p>
+                  <p className="text-slate-400 text-sm leading-relaxed mb-8 font-medium">{String(item.observation)}</p>
                   {item.remedy && (
                     <div className="mt-auto p-6 bg-indigo-500/5 rounded-3xl border border-indigo-500/10 text-xs text-slate-300 italic leading-relaxed">
-                      <span className="text-indigo-400 mr-2 font-black not-italic uppercase tracking-wider">Corrective Action:</span>{item.remedy}
+                      <span className="text-indigo-400 mr-2 font-black not-italic uppercase tracking-wider">Corrective Action:</span>{String(item.remedy)}
                     </div>
                   )}
                 </div>
@@ -508,10 +507,10 @@ export default function App() {
                  <h3 className="text-lg font-black text-white uppercase tracking-[0.3em] italic">Vastu Enhancements</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {report.generalRemedies.map((tip, idx) => (
+                {(report.generalRemedies || []).map((tip, idx) => (
                   <div key={idx} className="flex gap-6 items-center p-6 bg-black/30 rounded-[2.5rem] border border-white/5 hover:border-white/10 transition-colors">
                     <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-black text-sm shrink-0 shadow-inner border border-indigo-500/10">{idx + 1}</div>
-                    <p className="text-slate-300 text-sm font-bold uppercase tracking-tight leading-snug">{tip}</p>
+                    <p className="text-slate-300 text-sm font-bold uppercase tracking-tight leading-snug">{String(tip)}</p>
                   </div>
                 ))}
               </div>
@@ -523,7 +522,6 @@ export default function App() {
       {/* Mapping UI */}
       {(step === 'map-corners' || step === 'tag-rooms') && (
         <div className={`h-full w-full flex ${isDesktop ? 'flex-row' : 'flex-col'}`}>
-          {/* Main Map/Camera Container */}
           <div className="relative flex-1 bg-slate-900 overflow-hidden group">
             {isDesktop ? (
               <>
@@ -552,7 +550,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Top Search Bar (Desktop only) */}
             {isDesktop && (
               <div className="absolute top-10 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-2xl px-8 pointer-events-none">
                 <form onSubmit={handleSearch} className="glass p-3 rounded-[3rem] border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.5)] flex gap-4 pointer-events-auto backdrop-blur-[40px]">
@@ -577,7 +574,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Floating Compass HUD */}
             <div className="absolute top-10 right-10 z-[1000] flex flex-col items-end gap-6 pointer-events-none">
               <div className="glass p-8 rounded-[4rem] border-white/10 flex flex-col items-center shadow-2xl backdrop-blur-3xl group">
                 <div className="relative w-24 h-24 flex items-center justify-center mb-5">
@@ -604,23 +600,8 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            {/* Bottom HUD Labels (Desktop) */}
-            {isDesktop && (
-              <div className="absolute bottom-10 left-10 z-[1000] space-y-4 pointer-events-none">
-                <div className="glass p-5 px-8 rounded-[2.5rem] border-indigo-500/30 text-indigo-400 font-black text-[11px] uppercase tracking-widest shadow-2xl flex items-center gap-5 backdrop-blur-3xl">
-                  <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_15px_indigo]"></div>
-                  {step === 'map-corners' ? 'Spatial Boundary Definition' : 'Precision Space Tagging'}
-                </div>
-                <div className="glass p-5 px-8 rounded-[2.5rem] border-white/10 text-white/40 font-black text-[11px] uppercase tracking-widest shadow-2xl flex items-center gap-5 backdrop-blur-2xl">
-                  <MousePointer2 size={20} className="text-indigo-500" />
-                  <span>Click to Plot • Drag to Adjust</span>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Side/Bottom Control Panel */}
           <div className={`${isDesktop ? 'w-[500px] border-l border-white/10' : 'h-[360px] border-t border-white/10'} glass bg-slate-950/95 z-[2000] p-10 flex flex-col gap-8 backdrop-blur-[50px] shadow-[-20px_0_60px_rgba(0,0,0,0.5)]`}>
             <div className="flex justify-between items-start">
               <div className="space-y-2">
@@ -629,7 +610,7 @@ export default function App() {
                 </h3>
                 <div className="flex items-center gap-3">
                    <p className="text-slate-500 font-bold text-[11px] uppercase tracking-[0.3em]">
-                    {activeFloor.name.toUpperCase()}
+                    {String(activeFloor.name).toUpperCase()}
                    </p>
                    {location && (
                      <div className="flex items-center gap-1.5 text-indigo-500/50 text-[9px] font-black uppercase tracking-widest">
@@ -644,7 +625,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Floor Selection HUD */}
             <div className="flex gap-3 overflow-x-auto no-scrollbar py-2">
               {floors.map((f, idx) => (
                 <button
@@ -654,7 +634,7 @@ export default function App() {
                     activeFloorIdx === idx ? 'bg-indigo-600 border-indigo-400 text-white shadow-xl' : 'bg-slate-900 border-white/5 text-slate-500 hover:text-slate-400'
                   }`}
                 >
-                  {f.name}
+                  {String(f.name)}
                   {activeFloorIdx === idx && <div className="absolute bottom-0 left-0 w-full h-1 bg-white/20" />}
                 </button>
               ))}
@@ -666,7 +646,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Room Type Selector */}
             {step === 'tag-rooms' && (
               <div className="flex gap-3 overflow-x-auto no-scrollbar py-2">
                 {ROOM_TYPES.map(type => (
@@ -677,7 +656,7 @@ export default function App() {
                       selectedRoomType === type ? 'bg-emerald-500 border-emerald-400 text-white shadow-[0_15px_30px_rgba(16,185,129,0.4)] scale-105' : 'bg-white/5 border-white/5 text-slate-500 hover:border-white/20'
                     }`}
                   >
-                    {type}
+                    {String(type)}
                   </button>
                 ))}
               </div>
@@ -725,7 +704,6 @@ export default function App() {
                   </button>
                 )}
               </div>
-              
               <div className="flex justify-between items-center px-4">
                  <div className="flex items-center gap-3 text-[10px] font-black text-slate-600 uppercase tracking-widest">
                     <Info size={14} />
@@ -735,10 +713,9 @@ export default function App() {
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
 
-      {/* Error HUD Overlay */}
       {error && (
         <div className="absolute top-40 left-1/2 -translate-x-1/2 z-[4000] w-full max-w-xl px-10 animate-in fade-in slide-in-from-top-20 duration-500">
           <div className="bg-red-600 text-white p-8 rounded-[3rem] flex items-center justify-between shadow-[0_40px_80px_rgba(220,38,38,0.4)] border border-red-500 relative overflow-hidden">
@@ -747,7 +724,7 @@ export default function App() {
               <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center shrink-0">
                 <AlertTriangle size={28} />
               </div>
-              <span>{error}</span>
+              <span>{String(error)}</span>
             </div>
             <button 
               onClick={() => setError(null)} 
