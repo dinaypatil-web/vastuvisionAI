@@ -1,0 +1,8 @@
+{
+  "name": "VastuVision AI",
+  "description": "An augmented reality and map-based Vastu analysis tool that uses camera, GPS, and Google Maps to provide expert architectural advice.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
