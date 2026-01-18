@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { GeoPoint, TaggedRoom, Floor, VastuReport, RoomType, IndianLanguage } from './types';
 import { ROOM_TYPES, INDIAN_LANGUAGES } from './constants';
 import { analyzeVastu, searchLocation } from './services/gemini';
@@ -7,27 +7,29 @@ import {
   CameraIcon, 
   MapPinIcon, 
   CompassIcon, 
-  CheckCircleIcon, 
   ChevronRightIcon, 
   RotateCcwIcon,
-  HomeIcon, 
   AlertTriangle,
-  Info,
   Loader2,
-  Globe,
   Undo2,
-  Maximize2,
-  Minimize2,
-  HelpCircle,
   Download,
   Plus,
   Minus,
   Move,
   Layers,
-  ArrowRight,
   Search,
-  MousePointer2
+  MousePointer2,
+  Crosshair,
+  Target,
+  Maximize2,
+  Minimize2,
+  Info,
+  ArrowRight
 } from 'lucide-react';
+
+// Leaflet Imports
+import * as L from 'leaflet';
+import { MapContainer, TileLayer, Marker, Polyline, Polygon, useMap, useMapEvents } from 'react-leaflet';
 
 // Dynamic imports for PDF libraries
 const getPDFLibs = async () => {
@@ -44,178 +46,130 @@ const getDirection = (heading: number): string => {
 };
 
 /**
- * Enhanced Virtual Map Component
- * Supports interactive clicking for manual placement (Desktop Mode).
+ * Map Controller to handle centering and clicks
  */
-const VirtualMap = ({ 
-  floor,
-  heading, 
-  isExpanded,
-  zoomLevel = 1,
-  pan = { x: 0, y: 0 },
-  onMapClick,
-  isDesktop
-}: { 
-  floor: Floor,
-  heading: number,
-  isExpanded: boolean,
-  zoomLevel?: number,
-  pan?: { x: number, y: number },
-  onMapClick?: (lat: number, lng: number) => void,
-  isDesktop: boolean
+const MapEvents = ({ onMapClick, targetLocation }: { 
+  onMapClick: (lat: number, lng: number) => void,
+  targetLocation: { lat: number, lng: number } | null 
 }) => {
-  const { corners, rooms } = floor;
-  const svgRef = useRef<SVGSVGElement>(null);
+  const map = useMap();
+  
+  useEffect(() => {
+    if (targetLocation) {
+      map.flyTo([targetLocation.lat, targetLocation.lng], 19, {
+        duration: 1.5
+      });
+    }
+  }, [targetLocation, map]);
 
-  const bounds = useMemo(() => {
-    if (corners.length === 0 && rooms.length === 0) return null;
-    const allPoints = [...corners, ...rooms.map(r => r.point)];
-    const lats = allPoints.map(p => p.lat);
-    const lngs = allPoints.map(p => p.lng);
-    return {
-      minLat: Math.min(...lats),
-      maxLat: Math.max(...lats),
-      minLng: Math.min(...lngs),
-      maxLng: Math.max(...lngs)
-    };
-  }, [corners, rooms]);
+  useMapEvents({
+    click(e) {
+      onMapClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+};
 
-  const basePadding = 0.00008; 
-  const viewSize = 200;
-
-  // Use current location or bounds
-  const currentBounds = bounds || {
-    minLat: 0, maxLat: 0, minLng: 0, maxLng: 0
-  };
-
-  const width = Math.max((currentBounds.maxLng - currentBounds.minLng), 0.0001) + basePadding * 2;
-  const height = Math.max((currentBounds.maxLat - currentBounds.minLat), 0.0001) + basePadding * 2;
-  const scale = Math.min(viewSize / width, viewSize / height) * zoomLevel;
-
-  const getX = (lng: number) => (lng - (currentBounds.minLng - basePadding)) * scale + pan.x;
-  const getY = (lat: number) => viewSize - ((lat - (currentBounds.minLat - basePadding)) * scale) + pan.y;
-
-  const handleSvgClick = (e: React.MouseEvent) => {
-    if (!onMapClick || !svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * viewSize;
-    const y = ((e.clientY - rect.top) / rect.height) * viewSize;
-
-    // Inverse projection to get Lat/Lng
-    // Note: This is approximate for a 2D line diagram representation
-    const lng = (x - pan.x) / scale + (currentBounds.minLng - basePadding);
-    const lat = (viewSize - y + pan.y) / scale + (currentBounds.minLat - basePadding);
-    onMapClick(lat, lng);
-  };
-
-  const lineThickness = Math.max(3 / zoomLevel, 1.5);
-  const nodeRadius = Math.max(5 / zoomLevel, 3);
-  const roomBoxSize = Math.max(12 / zoomLevel, 8);
-
+/**
+ * Desktop Map Component
+ */
+const DesktopMap = ({ 
+  floor, 
+  onMapClick, 
+  targetLocation,
+  updatePointPosition
+}: { 
+  floor: Floor, 
+  onMapClick: (lat: number, lng: number) => void,
+  targetLocation: { lat: number, lng: number } | null,
+  updatePointPosition: (type: 'corner' | 'room', index: number, lat: number, lng: number) => void
+}) => {
+  const center: [number, number] = targetLocation ? [targetLocation.lat, targetLocation.lng] : [20.5937, 78.9629];
+  const cornerCoords = floor.corners.map(c => [c.lat, c.lng] as [number, number]);
+  
   return (
-    <svg 
-      ref={svgRef}
-      width="100%" height="100%" 
-      viewBox={`0 0 ${viewSize} ${viewSize}`} 
-      className={`overflow-hidden touch-none bg-slate-950/90 ${isDesktop ? 'cursor-crosshair' : ''}`}
-      onClick={isDesktop ? handleSvgClick : undefined}
+    <MapContainer 
+      center={center} 
+      zoom={19} 
+      scrollWheelZoom={true} 
+      className="w-full h-full"
+      zoomControl={false}
+      attributionControl={false}
     >
-      <defs>
-        <pattern id="blueprint-grid" width="20" height="20" patternUnits="userSpaceOnUse">
-          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(99, 102, 241, 0.2)" strokeWidth="0.5"/>
-        </pattern>
-        <filter id="node-glow">
-          <feGaussianBlur stdDeviation="1.5" result="blur" />
-          <feComposite in="SourceGraphic" in2="blur" operator="over" />
-        </filter>
-      </defs>
-      <rect width="100%" height="100%" fill="url(#blueprint-grid)" />
-
-      {corners.length > 1 && (
-        <polyline
-          points={corners.map(c => `${getX(c.lng)},${getY(c.lat)}`).join(' ')}
-          fill="rgba(99, 102, 241, 0.1)"
-          stroke="rgba(99, 102, 241, 1)"
-          strokeWidth={lineThickness}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeDasharray={corners.length < 3 ? "4,4" : "0"}
-          className="transition-all duration-300"
-        />
-      )}
-      {corners.length > 2 && (
-        <line 
-          x1={getX(corners[corners.length-1].lng)} 
-          y1={getY(corners[corners.length-1].lat)} 
-          x2={getX(corners[0].lng)} 
-          y2={getY(corners[0].lat)} 
-          stroke="rgba(99, 102, 241, 1)" 
-          strokeWidth={lineThickness}
-          strokeLinecap="round"
-        />
-      )}
-
-      {corners.map((c, i) => (
-        <g key={`c-${i}`}>
-          <circle 
-            cx={getX(c.lng)} cy={getY(c.lat)} 
-            r={nodeRadius} 
-            fill="#6366f1" 
-            filter="url(#node-glow)"
-            stroke="white"
-            strokeWidth={1 / zoomLevel}
-          />
-          {isExpanded && (
-            <text 
-              x={getX(c.lng)} y={getY(c.lat) - nodeRadius - 5} 
-              fontSize={9 / zoomLevel} fill="#a5b4fc" 
-              textAnchor="middle" className="font-mono font-black select-none pointer-events-none"
-              style={{ filter: 'drop-shadow(0 1px 2px black)' }}
-            >
-              V{i+1}
-            </text>
-          )}
-        </g>
-      ))}
-
-      {rooms.map((r, i) => (
-        <g key={`r-${i}`}>
-          <rect 
-            x={getX(r.point.lng) - roomBoxSize / 2} 
-            y={getY(r.point.lat) - roomBoxSize / 2} 
-            width={roomBoxSize} 
-            height={roomBoxSize} 
-            fill="#10b981" 
-            stroke="white"
-            strokeWidth={1.5 / zoomLevel}
-            filter="url(#node-glow)"
-            transform={`rotate(${r.point.heading}, ${getX(r.point.lng)}, ${getY(r.point.lat)})`} 
-          />
-          {isExpanded && (
-            <text 
-              x={getX(r.point.lng)} y={getY(r.point.lat) + roomBoxSize + 3} 
-              fontSize={8 / zoomLevel} fill="white" 
-              textAnchor="middle" className="font-bold select-none pointer-events-none uppercase"
-              style={{ filter: 'drop-shadow(0 1px 2px black)' }}
-            >
-              {r.type.split(' ')[0]}
-            </text>
-          )}
-        </g>
-      ))}
+      <TileLayer
+        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+      />
       
-      {corners.length > 0 && (
-        <g transform={`translate(${getX(corners[corners.length-1].lng)}, ${getY(corners[corners.length-1].lat)}) rotate(${heading})`}>
-          <path d="M 0 -14 L 7 0 L -7 0 Z" fill="#ef4444" stroke="white" strokeWidth={1} />
-        </g>
+      <MapEvents onMapClick={onMapClick} targetLocation={targetLocation} />
+
+      {/* Boundary Polygon */}
+      {cornerCoords.length >= 3 && (
+        <Polygon 
+          positions={cornerCoords} 
+          pathOptions={{ 
+            color: '#6366f1', 
+            fillColor: '#6366f1', 
+            fillOpacity: 0.15, 
+            weight: 3,
+            lineJoin: 'round'
+          }} 
+        />
       )}
 
-      {!bounds && (
-        <text x="100" y="100" textAnchor="middle" fill="#475569" fontSize="8" className="font-black italic">
-          {isDesktop ? 'CLICK TO PLACE FIRST CORNER' : 'GPS POSITIONING...'}
-        </text>
+      {/* Perimeter Line */}
+      {cornerCoords.length > 1 && cornerCoords.length < 3 && (
+        <Polyline 
+          positions={cornerCoords} 
+          pathOptions={{ color: '#6366f1', weight: 3, dashArray: '8, 8' }} 
+        />
       )}
-    </svg>
+
+      {/* Corner Markers - Draggable for exact positioning */}
+      {floor.corners.map((c, i) => (
+        <Marker 
+          key={`c-${i}`} 
+          position={[c.lat, c.lng]} 
+          draggable={true}
+          eventHandlers={{
+            dragend: (e) => {
+              const marker = e.target;
+              const position = marker.getLatLng();
+              updatePointPosition('corner', i, position.lat, position.lng);
+            },
+          }}
+          icon={L.divIcon({
+            className: 'custom-div-icon',
+            html: `<div class="w-5 h-5 bg-indigo-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(99,102,241,1)] flex items-center justify-center text-[10px] font-black text-white cursor-move">${i+1}</div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+          })}
+        />
+      ))}
+
+      {/* Room Markers - Draggable for exact positioning */}
+      {floor.rooms.map((r, i) => (
+        <Marker 
+          key={`r-${i}`} 
+          position={[r.point.lat, r.point.lng]} 
+          draggable={true}
+          eventHandlers={{
+            dragend: (e) => {
+              const marker = e.target;
+              const position = marker.getLatLng();
+              updatePointPosition('room', i, position.lat, position.lng);
+            },
+          }}
+          icon={L.divIcon({
+            className: 'custom-div-icon',
+            html: `<div class="p-2 bg-emerald-500 rounded-xl border border-white shadow-2xl flex items-center gap-2 whitespace-nowrap cursor-move hover:scale-105 transition-transform">
+                    <div class="w-2.5 h-2.5 bg-white rounded-full animate-pulse"></div>
+                    <span class="text-[10px] font-black text-white uppercase tracking-tighter">${r.type}</span>
+                  </div>`,
+            iconAnchor: [20, 20]
+          })}
+        />
+      ))}
+    </MapContainer>
   );
 };
 
@@ -225,18 +179,16 @@ export default function App() {
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [report, setReport] = useState<VastuReport | null>(null);
   const [heading, setHeading] = useState<number>(0);
-  const [location, setLocation] = useState<GeolocationCoordinates | null>(null);
+  const [location, setLocation] = useState<{ lat: number, lng: number, accuracy: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedRoomType, setSelectedRoomType] = useState<RoomType>('Main Entrance');
   const [language, setLanguage] = useState<IndianLanguage>('English');
-  const [showLargeMap, setShowLargeMap] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [mapZoom, setMapZoom] = useState(1);
-  const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
   const [isDesktop, setIsDesktop] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [isMapReady, setIsMapReady] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -244,14 +196,13 @@ export default function App() {
   const activeFloor = floors[activeFloorIdx];
 
   useEffect(() => {
-    // Detect desktop/large screen
     const checkDesktop = () => setIsDesktop(window.innerWidth > 1024);
     checkDesktop();
     window.addEventListener('resize', checkDesktop);
 
     const geoId = navigator.geolocation.watchPosition(
-      (pos) => setLocation(pos.coords),
-      (err) => console.warn("GPS lock delayed. Use Map Search for manual entry."),
+      (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      (err) => console.warn("GPS tracking unavailable. Using map search."),
       { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
     );
 
@@ -285,10 +236,12 @@ export default function App() {
       }
       if (!isDesktop) await startCamera();
       setStep('map-corners');
-      if (isDesktop) setShowLargeMap(true); // Default to large map on desktop
+      // On desktop, the map loads immediately in the boundary step.
+      if (isDesktop) setTimeout(() => setIsMapReady(true), 1000);
     } catch (e) {
       if (!isDesktop) await startCamera();
       setStep('map-corners');
+      if (isDesktop) setTimeout(() => setIsMapReady(true), 1000);
     } finally {
       setIsInitializing(false);
     }
@@ -302,16 +255,16 @@ export default function App() {
       });
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) {
-      console.warn("Camera failed. Continuing in Map mode.");
+      console.warn("Camera failed. Switching to map mode.");
     }
   };
 
-  const markPoint = (customLat?: number, customLng?: number) => {
-    const lat = customLat ?? location?.latitude;
-    const lng = customLng ?? location?.longitude;
+  const markPoint = useCallback((customLat?: number, customLng?: number) => {
+    const lat = customLat ?? location?.lat;
+    const lng = customLng ?? location?.lng;
 
     if (lat === undefined || lng === undefined) {
-      setError("No coordinate detected. Click on map or search address.");
+      setError("Please search for a location or click on the map to mark a point.");
       return;
     }
 
@@ -338,6 +291,20 @@ export default function App() {
       newFloors[activeFloorIdx] = floor;
       return newFloors;
     });
+  }, [location, heading, activeFloorIdx, step, selectedRoomType]);
+
+  const updatePointPosition = (type: 'corner' | 'room', index: number, lat: number, lng: number) => {
+    setFloors(prev => {
+      const newFloors = [...prev];
+      const floor = { ...newFloors[activeFloorIdx] };
+      if (type === 'corner') {
+        floor.corners[index] = { ...floor.corners[index], lat, lng };
+      } else {
+        floor.rooms[index] = { ...floor.rooms[index], point: { ...floor.rooms[index].point, lat, lng } };
+      }
+      newFloors[activeFloorIdx] = floor;
+      return newFloors;
+    });
   };
 
   const removeLast = () => {
@@ -351,7 +318,6 @@ export default function App() {
     });
   };
 
-  // Fix: Added missing addNewFloor function to support adding multiple floors to the architectural layout.
   const addNewFloor = () => {
     const nextIdx = floors.length;
     const newFloor: Floor = {
@@ -364,7 +330,6 @@ export default function App() {
     setFloors(prev => [...prev, newFloor]);
     setActiveFloorIdx(nextIdx);
     setStep('map-corners');
-    setError(null);
   };
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -374,25 +339,13 @@ export default function App() {
     try {
       const result = await searchLocation(searchQuery);
       if (result) {
-        // Center map on searched location by resetting pan
-        setMapPan({ x: 0, y: 0 });
-        setMapZoom(2);
-        // Force location update for manual tagging
-        setLocation({
-          latitude: result.lat,
-          longitude: result.lng,
-          accuracy: 1,
-          altitude: null,
-          altitudeAccuracy: null,
-          heading: null,
-          speed: null
-        } as any);
+        setLocation({ lat: result.lat, lng: result.lng, accuracy: 1 });
         setSearchQuery(result.address);
       } else {
-        setError("Location not found. Try more details.");
+        setError("Could not find that location. Please be more specific.");
       }
     } catch (err) {
-      setError("Search service unavailable.");
+      setError("Search failed. Please check your connection.");
     } finally {
       setIsSearching(false);
     }
@@ -400,16 +353,16 @@ export default function App() {
 
   const handleAnalyze = async () => {
     if (floors.some(f => f.corners.length < 3)) {
-      setError("Every floor needs a closed boundary (min 3 corners).");
+      setError("Every floor must have a complete boundary (at least 3 corners).");
       return;
     }
     setStep('analyzing');
     try {
-      const result = await analyzeVastu(floors, language, location ? { lat: location.latitude, lng: location.longitude } : undefined);
+      const result = await analyzeVastu(floors, language, location ? { lat: location.lat, lng: location.lng } : undefined);
       setReport(result);
       setStep('report');
     } catch (err: any) {
-      setError("Vastu Engine busy. Please try again.");
+      setError("AI analysis failed. Please try again with clearer marker placements.");
       setStep('tag-rooms');
     }
   };
@@ -425,9 +378,9 @@ export default function App() {
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Vastu_Report.pdf`);
+      pdf.save(`VastuVision_Report.pdf`);
     } catch (err) {
-      setError("PDF Export failed.");
+      setError("Failed to generate PDF. Please try again.");
     } finally {
       setIsDownloading(false);
     }
@@ -439,10 +392,11 @@ export default function App() {
     setReport(null);
     setStep('welcome');
     setError(null);
+    setIsMapReady(false);
   };
 
   return (
-    <div className={`relative h-screen w-screen overflow-hidden bg-black touch-none ${isDesktop ? 'desktop-mode' : ''}`}>
+    <div className="relative h-screen w-screen overflow-hidden bg-black touch-none">
       {!isDesktop && (
         <>
           <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${step !== 'map-corners' && step !== 'tag-rooms' ? 'opacity-0' : 'opacity-100'}`} />
@@ -450,85 +404,85 @@ export default function App() {
         </>
       )}
 
-      {/* Welcome Screen */}
+      {/* Welcome */}
       {step === 'welcome' && (
         <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center p-8 text-center space-y-8">
-          <div className="p-8 bg-indigo-600 rounded-[2.5rem] shadow-2xl animate-pulse ring-8 ring-indigo-500/10 transform rotate-3">
-            <Layers size={72} className="text-white -rotate-3" />
+          <div className="p-8 bg-indigo-600 rounded-[3rem] shadow-2xl animate-bounce ring-8 ring-indigo-500/10">
+            <Layers size={80} className="text-white" />
           </div>
-          <div className="space-y-3">
-            <h1 className="text-5xl font-black tracking-tight text-white uppercase italic">VastuVision</h1>
-            <p className="text-slate-500 text-lg max-w-md font-bold uppercase tracking-widest">{isDesktop ? 'Desktop Map Modeler' : 'Augmented Reality Surveyor'}</p>
+          <div className="space-y-4">
+            <h1 className="text-7xl font-black tracking-tighter text-white uppercase italic drop-shadow-2xl">VastuVision</h1>
+            <p className="text-slate-500 text-sm font-bold uppercase tracking-[0.4em]">{isDesktop ? 'Architectural Map Modeler' : 'AR Spatial Surveyor'}</p>
           </div>
           <div className="w-full max-w-xs space-y-4">
-            <div className="space-y-1 text-left">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-3">Primary Language</label>
-              <select 
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as IndianLanguage)}
-                className="w-full bg-slate-900 border border-white/10 text-white p-4 rounded-3xl focus:ring-2 focus:ring-indigo-500 outline-none appearance-none font-bold"
-              >
-                {INDIAN_LANGUAGES.map(lang => <option key={lang} value={lang}>{lang}</option>)}
-              </select>
-            </div>
+            <select 
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as IndianLanguage)}
+              className="w-full bg-slate-900 border border-white/10 text-white p-5 rounded-3xl font-black text-xs uppercase cursor-pointer hover:bg-slate-800 transition-colors"
+            >
+              {INDIAN_LANGUAGES.map(lang => <option key={lang} value={lang}>{lang}</option>)}
+            </select>
             <button 
               onClick={requestPermission} disabled={isInitializing}
-              className="w-full py-5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-3xl font-black text-sm uppercase tracking-widest shadow-2xl flex items-center justify-center space-x-3 disabled:opacity-50 transition-all hover:scale-105"
+              className="w-full py-6 bg-indigo-500 hover:bg-indigo-400 text-white rounded-3xl font-black text-sm uppercase tracking-widest shadow-2xl transition-all hover:scale-105 active:scale-95"
             >
-              {isInitializing ? <Loader2 className="animate-spin" /> : <><span>Initialize Engine</span><ArrowRight size={20} /></>}
+              {isInitializing ? <Loader2 className="animate-spin mx-auto" /> : 'Begin Mapping'}
             </button>
-            <p className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">{isDesktop ? 'Interactive map search enabled' : 'GPS + Compass + Camera enabled'}</p>
+            <p className="text-[10px] text-slate-600 font-bold uppercase tracking-widest mt-4">Precision Vastu Auditing Platform</p>
           </div>
         </div>
       )}
 
-      {/* Analysis Screen */}
+      {/* Analyzing UI */}
       {step === 'analyzing' && (
-        <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center text-white p-8">
-          <div className="relative mb-8">
-            <div className="absolute inset-0 animate-ping bg-indigo-500/20 rounded-full" />
-            <Loader2 size={80} className="animate-spin text-indigo-500 relative z-10" />
+        <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center text-white p-12 text-center">
+          <div className="relative mb-12">
+             <div className="absolute inset-0 animate-ping bg-indigo-500/20 rounded-full" />
+             <Loader2 size={100} className="animate-spin text-indigo-500 relative z-10" />
           </div>
-          <h2 className="text-3xl font-black uppercase tracking-widest italic">Analyzing Geometry</h2>
-          <p className="text-slate-500 text-sm mt-3 font-bold tracking-widest uppercase">Cross-referencing with Vastu Shastra scriptures...</p>
+          <h2 className="text-5xl font-black uppercase italic tracking-tighter mb-4">Processing Geometry</h2>
+          <p className="text-slate-500 text-sm font-bold uppercase tracking-[0.3em]">Cross-referencing with architectural scriptures...</p>
         </div>
       )}
 
       {/* Report View */}
       {step === 'report' && report && (
         <div className="absolute inset-0 z-50 bg-slate-950 text-white flex flex-col h-full overflow-hidden">
-          <header className="glass p-6 border-b border-white/5 flex justify-between items-center shrink-0">
-            <button onClick={reset} className="p-3 bg-white/5 rounded-2xl hover:bg-white/10 transition-colors"><RotateCcwIcon size={20}/></button>
+          <header className="glass p-6 border-b border-white/5 flex justify-between items-center z-10">
+            <button onClick={reset} className="p-3 bg-white/5 rounded-2xl hover:bg-white/10 transition-colors" title="Start Over"><RotateCcwIcon size={20}/></button>
             <div className="text-center">
-              <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400">Architectural Audit</h2>
-              <div className="font-black text-sm uppercase">Vastu Compliance Result</div>
+              <h2 className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-400 mb-1">Architectural Audit</h2>
+              <div className="font-black text-lg uppercase italic tracking-tighter">Vastu Compliance Result</div>
             </div>
-            <button onClick={handleDownloadPDF} disabled={isDownloading} className="p-3 bg-indigo-500 rounded-2xl shadow-xl disabled:opacity-50 hover:bg-indigo-400">
-              {isDownloading ? <Loader2 size={20} className="animate-spin" /> : <Download size={20} />}
+            <button onClick={handleDownloadPDF} disabled={isDownloading} className="p-4 bg-indigo-500 rounded-2xl shadow-xl hover:bg-indigo-400 transition-colors disabled:opacity-50">
+              {isDownloading ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
             </button>
           </header>
           
-          <main ref={reportRef} className="flex-1 overflow-y-auto p-8 space-y-8 pb-32 no-scrollbar max-w-4xl mx-auto w-full">
-            <div className="glass p-12 rounded-[3rem] text-center relative overflow-hidden border-indigo-500/20">
+          <main ref={reportRef} className="flex-1 overflow-y-auto p-8 lg:p-12 space-y-12 pb-32 no-scrollbar max-w-6xl mx-auto w-full">
+            <div className="glass p-16 rounded-[4rem] text-center relative overflow-hidden border-indigo-500/20 shadow-2xl bg-gradient-to-br from-indigo-500/5 to-transparent">
+              <div className="text-[10rem] font-black bg-gradient-to-b from-white to-slate-600 bg-clip-text text-transparent leading-none tracking-tighter">{report.overallScore}%</div>
+              <div className="text-xs uppercase tracking-[0.6em] text-slate-500 font-black mt-8">Holistic Compliance Score</div>
               <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-emerald-500 to-indigo-500" />
-              <div className="text-9xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-600 tracking-tighter leading-none">{report.overallScore}%</div>
-              <div className="text-xs uppercase tracking-[0.5em] text-slate-500 font-black mt-4">Total Compliance Score</div>
             </div>
 
-            <section className="glass p-8 rounded-[2.5rem] border-l-8 border-indigo-500 shadow-2xl">
-              <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-3">Executive Summary</h3>
-              <p className="text-slate-200 italic text-lg leading-relaxed font-medium">"{report.summary}"</p>
+            <section className="glass p-12 rounded-[3.5rem] border-l-8 border-indigo-500 shadow-2xl relative overflow-hidden">
+               <div className="absolute top-0 right-0 p-8 opacity-5">
+                  <Layers size={120} />
+               </div>
+              <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest mb-6">Expert Summary</h3>
+              <p className="text-slate-200 italic text-2xl leading-relaxed font-medium relative z-10">"{report.summary}"</p>
             </section>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {report.roomAnalysis.map((item, idx) => (
-                <div key={idx} className="glass p-6 rounded-[2rem] border border-white/5 hover:border-white/10 transition-all flex flex-col h-full shadow-lg">
-                  <div className="flex justify-between items-start mb-4">
+                <div key={idx} className="glass p-8 rounded-[3rem] border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col shadow-xl group">
+                  <div className="flex justify-between items-start mb-6">
                     <div className="flex flex-col">
-                      <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest mb-1">{item.floorName || 'Standard'}</span>
-                      <h4 className="font-black text-slate-100 uppercase text-lg italic tracking-tight">{item.roomType}</h4>
+                      <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-2">{item.floorName || 'Structure'}</span>
+                      <h4 className="font-black text-slate-100 uppercase text-xl italic tracking-tight group-hover:text-indigo-300 transition-colors">{item.roomType}</h4>
                     </div>
-                    <div className={`text-[9px] px-3 py-1.5 rounded-full font-black uppercase tracking-widest shadow-inner ${
+                    <div className={`text-[10px] px-4 py-2 rounded-full font-black uppercase tracking-widest shadow-inner ${
                       item.status === 'Good' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
                       item.status === 'Fair' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 
                       'bg-red-500/10 text-red-400 border border-red-500/20'
@@ -536,259 +490,271 @@ export default function App() {
                       {item.status}
                     </div>
                   </div>
-                  <p className="text-slate-400 text-sm leading-relaxed mb-6 font-medium">{item.observation}</p>
+                  <p className="text-slate-400 text-sm leading-relaxed mb-8 font-medium">{item.observation}</p>
                   {item.remedy && (
-                    <div className="mt-auto p-5 bg-indigo-500/5 rounded-2xl border border-indigo-500/10 text-xs text-slate-300 font-bold leading-relaxed">
-                      <span className="text-indigo-400 mr-2 uppercase tracking-widest">Correction:</span>{item.remedy}
+                    <div className="mt-auto p-6 bg-indigo-500/5 rounded-3xl border border-indigo-500/10 text-xs text-slate-300 italic leading-relaxed">
+                      <span className="text-indigo-400 mr-2 font-black not-italic uppercase tracking-wider">Corrective Action:</span>{item.remedy}
                     </div>
                   )}
                 </div>
               ))}
             </div>
 
-            <section className="glass p-8 rounded-[2.5rem] bg-emerald-500/5 border border-emerald-500/10">
-              <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-6">Expert Recommendations</h3>
-              <ul className="grid grid-cols-1 gap-4">
+            <section className="glass p-12 rounded-[4rem] bg-indigo-500/5 border border-white/5 relative overflow-hidden">
+              <div className="flex items-center gap-6 mb-10">
+                 <div className="w-12 h-12 bg-indigo-500 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                    <Target size={24} />
+                 </div>
+                 <h3 className="text-lg font-black text-white uppercase tracking-[0.3em] italic">Vastu Enhancements</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {report.generalRemedies.map((tip, idx) => (
-                  <li key={idx} className="flex gap-4 text-sm text-slate-400 font-bold items-center bg-black/20 p-4 rounded-2xl border border-white/5">
-                    <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 font-black text-[10px]">{idx + 1}</div>
-                    <span className="leading-tight">{tip}</span>
-                  </li>
+                  <div key={idx} className="flex gap-6 items-center p-6 bg-black/30 rounded-[2.5rem] border border-white/5 hover:border-white/10 transition-colors">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-black text-sm shrink-0 shadow-inner border border-indigo-500/10">{idx + 1}</div>
+                    <p className="text-slate-300 text-sm font-bold uppercase tracking-tight leading-snug">{tip}</p>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </section>
           </main>
         </div>
       )}
 
-      {/* Mapping Engine UI */}
+      {/* Mapping UI */}
       {(step === 'map-corners' || step === 'tag-rooms') && (
-        <>
-          {/* Desktop Search Header */}
-          {isDesktop && (
-            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[60] w-full max-w-xl px-4 pointer-events-none">
-              <form onSubmit={handleSearch} className="glass p-2 rounded-3xl border-white/10 shadow-2xl flex gap-2 pointer-events-auto backdrop-blur-3xl">
-                <div className="relative flex-1">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                  <input 
-                    type="text" 
-                    placeholder="Search address or neighborhood..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-white/5 border border-white/5 text-white pl-12 pr-4 py-3 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-sm"
-                  />
-                </div>
-                <button 
-                  type="submit" 
-                  disabled={isSearching}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 rounded-2xl font-black text-xs uppercase tracking-widest disabled:opacity-50 transition-colors"
-                >
-                  {isSearching ? <Loader2 className="animate-spin" /> : 'Search'}
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* Left HUD Panel */}
-          <div className="absolute top-6 left-6 z-20 space-y-3 pointer-events-none">
-            <div className="glass p-3 px-4 rounded-2xl flex items-center space-x-3 text-[10px] font-black border-white/10 text-white uppercase tracking-tighter shadow-xl">
-              <MapPinIcon size={14} className="text-red-500" />
-              <span>{location ? `GPS ACCURACY: ${Math.round(location.accuracy)}m` : 'LOCATING...'}</span>
-            </div>
-            <div className="glass p-3 px-4 rounded-2xl flex items-center space-x-3 text-[10px] font-black border-indigo-500/40 text-indigo-300 uppercase tracking-tighter shadow-xl">
-              <Layers size={14} />
-              <span>{activeFloor.name.toUpperCase()}</span>
-            </div>
-          </div>
-
-          {/* Right HUD Panel */}
-          <div className="absolute top-6 right-6 z-20 flex flex-col items-end gap-4">
-            <div className="glass p-4 rounded-3xl border-white/10 flex flex-col items-center pointer-events-none shadow-2xl backdrop-blur-2xl">
-              <div className="relative w-16 h-16 flex items-center justify-center mb-2">
-                <div className="absolute inset-0 border-2 border-white/5 rounded-full" />
-                <CompassIcon size={40} className="text-indigo-400" style={{ transform: `rotate(${heading}deg)` }} />
-                <div className="absolute -top-1 w-1.5 h-3 bg-red-600 rounded-full shadow-[0_0_10px_red]" />
-              </div>
-              <span className="text-[12px] font-black text-white">{heading}° {getDirection(heading)}</span>
-            </div>
-
-            {/* Interactive Map/Line Diagram Container */}
-            <div 
-              className={`glass border-white/20 rounded-[2.5rem] overflow-hidden transition-all duration-700 pointer-events-auto shadow-2xl backdrop-blur-3xl relative ${
-                showLargeMap ? (isDesktop ? 'w-[65vw] h-[65vh] max-w-[1200px]' : 'w-[92vw] h-[60vh]') : 'w-32 h-32'
-              }`}
-            >
-              <div className="absolute top-0 left-0 right-0 p-4 bg-black/80 flex justify-between items-center z-10 border-b border-white/5">
-                 <span className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] pl-2">{activeFloor.name} Layout</span>
-                 {!isDesktop && (
-                  <button onClick={() => setShowLargeMap(!showLargeMap)} className="text-white p-2 hover:bg-white/10 rounded-2xl transition-colors">
-                    {showLargeMap ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                  </button>
-                 )}
-              </div>
-
-              {showLargeMap && (
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-4 z-10">
-                  <button onClick={() => setMapZoom(z => Math.min(z + 0.5, 8))} className="p-4 bg-indigo-500 rounded-2xl text-white shadow-2xl active:scale-90 hover:bg-indigo-400"><Plus size={20} /></button>
-                  <button onClick={() => setMapZoom(z => Math.max(z - 0.5, 0.4))} className="p-4 bg-indigo-500 rounded-2xl text-white shadow-2xl active:scale-90 hover:bg-indigo-400"><Minus size={20} /></button>
-                  <button onClick={() => { setMapPan({x:0,y:0}); setMapZoom(1); }} className="p-4 bg-white/10 rounded-2xl text-white backdrop-blur-xl active:scale-90 hover:bg-white/20"><RotateCcwIcon size={20} /></button>
-                </div>
-              )}
-
-              <div 
-                className="w-full h-full pt-12 relative overflow-hidden" 
-                onPointerMove={(e) => { if (showLargeMap && e.buttons === 1) setMapPan(p => ({ x: p.x + e.movementX, y: p.y + e.movementY })); }}
-              >
-                <VirtualMap 
-                  floor={activeFloor} 
-                  heading={heading} 
-                  isExpanded={showLargeMap} 
-                  zoomLevel={mapZoom} 
-                  pan={mapPan} 
-                  onMapClick={isDesktop ? (lat, lng) => markPoint(lat, lng) : undefined}
-                  isDesktop={isDesktop}
-                />
-              </div>
-
-              {showLargeMap && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-3 z-10">
-                  <div className="text-[9px] font-black text-white bg-indigo-600 px-4 py-2 rounded-full border border-white/10 shadow-xl flex items-center gap-2 uppercase tracking-widest">
-                    <Move size={12} /> {isDesktop ? 'Drag to Pan' : 'Pinch/Drag to Explore'}
+        <div className={`h-full w-full flex ${isDesktop ? 'flex-row' : 'flex-col'}`}>
+          {/* Main Map/Camera Container */}
+          <div className="relative flex-1 bg-slate-900 overflow-hidden group">
+            {isDesktop ? (
+              <>
+                {!isMapReady && (
+                  <div className="absolute inset-0 z-[1001] bg-slate-950 flex flex-col items-center justify-center space-y-4">
+                    <Loader2 size={48} className="animate-spin text-indigo-500" />
+                    <p className="text-slate-500 font-black text-[10px] uppercase tracking-[0.3em] animate-pulse">Initializing Map Engine...</p>
                   </div>
-                  {isDesktop && (
-                    <div className="text-[9px] font-black text-emerald-400 bg-black/60 px-4 py-2 rounded-full border border-emerald-500/20 shadow-xl flex items-center gap-2 uppercase tracking-widest backdrop-blur-md">
-                      <MousePointer2 size={12} /> Click to Plot Markers
-                    </div>
-                  )}
+                )}
+                <DesktopMap 
+                  floor={activeFloor} 
+                  onMapClick={markPoint} 
+                  targetLocation={location} 
+                  updatePointPosition={updatePointPosition}
+                />
+              </>
+            ) : (
+              <div className="w-full h-full relative">
+                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-60">
+                  <div className="w-72 h-72 border-4 border-dashed border-yellow-400/40 rounded-full flex items-center justify-center">
+                    <Crosshair size={48} className="text-yellow-400 stroke-[3]" />
+                    <div className="absolute w-2 h-2 bg-yellow-400 rounded-full shadow-[0_0_20px_rgba(250,204,21,1)]"></div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Top Search Bar (Desktop only) */}
+            {isDesktop && (
+              <div className="absolute top-10 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-2xl px-8 pointer-events-none">
+                <form onSubmit={handleSearch} className="glass p-3 rounded-[3rem] border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.5)] flex gap-4 pointer-events-auto backdrop-blur-[40px]">
+                  <div className="relative flex-1 group">
+                    <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors" size={24} />
+                    <input 
+                      type="text" 
+                      placeholder="Locate house by address or area..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-white/5 border-none text-white pl-16 pr-8 py-5 rounded-[2rem] outline-none font-black text-[11px] uppercase tracking-wider placeholder:text-slate-600 focus:bg-white/10 transition-all"
+                    />
+                  </div>
+                  <button 
+                    type="submit" 
+                    disabled={isSearching}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-12 rounded-[2rem] font-black text-[11px] uppercase tracking-widest transition-all shadow-xl disabled:opacity-50 active:scale-95 flex items-center gap-3"
+                  >
+                    {isSearching ? <Loader2 className="animate-spin" size={18} /> : <><span>Load Map</span><ArrowRight size={18} /></>}
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* Floating Compass HUD */}
+            <div className="absolute top-10 right-10 z-[1000] flex flex-col items-end gap-6 pointer-events-none">
+              <div className="glass p-8 rounded-[4rem] border-white/10 flex flex-col items-center shadow-2xl backdrop-blur-3xl group">
+                <div className="relative w-24 h-24 flex items-center justify-center mb-5">
+                  <div className="absolute inset-0 border-2 border-white/5 rounded-full" />
+                  <CompassIcon size={64} className="text-indigo-400 group-hover:scale-110 transition-transform duration-500" style={{ transform: `rotate(${heading}deg)` }} />
+                  <div className="absolute -top-1 w-2.5 h-5 bg-red-600 rounded-full shadow-[0_0_20px_red]" />
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full" />
+                </div>
+                <div className="text-center">
+                  <div className="text-white font-black text-lg tracking-tighter">{heading}° {getDirection(heading)}</div>
+                  <div className="text-slate-500 text-[9px] font-black uppercase tracking-[0.3em] mt-1">{isDesktop ? 'ORIENTATION' : 'DEVICE HEADING'}</div>
+                </div>
+              </div>
+
+              {isDesktop && (
+                <div className="flex flex-col gap-3 pointer-events-auto">
+                   <button 
+                    onClick={() => setLocation(prev => prev ? { ...prev } : null)} 
+                    className="p-5 bg-white/5 hover:bg-white/10 rounded-3xl border border-white/10 text-white transition-all shadow-xl active:scale-90"
+                    title="Recenter Map"
+                   >
+                     <Target size={24} />
+                   </button>
                 </div>
               )}
             </div>
+
+            {/* Bottom HUD Labels (Desktop) */}
+            {isDesktop && (
+              <div className="absolute bottom-10 left-10 z-[1000] space-y-4 pointer-events-none">
+                <div className="glass p-5 px-8 rounded-[2.5rem] border-indigo-500/30 text-indigo-400 font-black text-[11px] uppercase tracking-widest shadow-2xl flex items-center gap-5 backdrop-blur-3xl">
+                  <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_15px_indigo]"></div>
+                  {step === 'map-corners' ? 'Spatial Boundary Definition' : 'Precision Space Tagging'}
+                </div>
+                <div className="glass p-5 px-8 rounded-[2.5rem] border-white/10 text-white/40 font-black text-[11px] uppercase tracking-widest shadow-2xl flex items-center gap-5 backdrop-blur-2xl">
+                  <MousePointer2 size={20} className="text-indigo-500" />
+                  <span>Click to Plot • Drag to Adjust</span>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Aiming Reticle (Mobile only) */}
-          {!isDesktop && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-25">
-               <div className="relative w-56 h-56">
-                  <div className="absolute top-1/2 left-0 w-full h-[1.5px] bg-white/50" />
-                  <div className="absolute left-1/2 top-0 w-[1.5px] h-full bg-white/50" />
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 border-2 border-white/70 rounded-full" />
-               </div>
+          {/* Side/Bottom Control Panel */}
+          <div className={`${isDesktop ? 'w-[500px] border-l border-white/10' : 'h-[360px] border-t border-white/10'} glass bg-slate-950/95 z-[2000] p-10 flex flex-col gap-8 backdrop-blur-[50px] shadow-[-20px_0_60px_rgba(0,0,0,0.5)]`}>
+            <div className="flex justify-between items-start">
+              <div className="space-y-2">
+                <h3 className="text-white font-black text-3xl uppercase italic tracking-tighter leading-none">
+                  {step === 'map-corners' ? 'Exterior Boundary' : 'Interior Layout'}
+                </h3>
+                <div className="flex items-center gap-3">
+                   <p className="text-slate-500 font-bold text-[11px] uppercase tracking-[0.3em]">
+                    {activeFloor.name.toUpperCase()}
+                   </p>
+                   {location && (
+                     <div className="flex items-center gap-1.5 text-indigo-500/50 text-[9px] font-black uppercase tracking-widest">
+                       <MapPinIcon size={10} />
+                       GPS Linked
+                     </div>
+                   )}
+                </div>
+              </div>
+              <div className="px-6 py-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-black text-[11px] uppercase tracking-widest shadow-inner">
+                {step === 'map-corners' ? activeFloor.corners.length : activeFloor.rooms.length} POINTS
+              </div>
             </div>
-          )}
 
-          {/* Footer Control Panel */}
-          <div className={`absolute bottom-0 left-0 right-0 p-8 z-30 pb-12 space-y-6 ${isDesktop ? 'max-w-4xl mx-auto' : ''}`}>
-            {/* Floor Swiper */}
-            <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1 pointer-events-auto">
+            {/* Floor Selection HUD */}
+            <div className="flex gap-3 overflow-x-auto no-scrollbar py-2">
               {floors.map((f, idx) => (
                 <button
                   key={f.id}
-                  onClick={() => { setActiveFloorIdx(idx); setStep(f.corners.length < 3 ? 'map-corners' : 'tag-rooms'); }}
-                  className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all shadow-xl ${
-                    activeFloorIdx === idx ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-900 border-white/5 text-slate-500 hover:text-slate-400'
+                  onClick={() => setActiveFloorIdx(idx)}
+                  className={`px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all relative overflow-hidden group ${
+                    activeFloorIdx === idx ? 'bg-indigo-600 border-indigo-400 text-white shadow-xl' : 'bg-slate-900 border-white/5 text-slate-500 hover:text-slate-400'
                   }`}
                 >
                   {f.name}
+                  {activeFloorIdx === idx && <div className="absolute bottom-0 left-0 w-full h-1 bg-white/20" />}
                 </button>
               ))}
               <button 
                 onClick={addNewFloor}
-                className="px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-indigo-500/50 text-indigo-400 bg-slate-950 shadow-xl hover:bg-indigo-950 transition-colors"
+                className="px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-dashed border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/5 transition-all flex items-center gap-2"
               >
-                + Add Floor
+                <Plus size={14} /> New Floor
               </button>
             </div>
 
-            <div className="glass p-6 rounded-[3rem] space-y-6 border-white/10 shadow-2xl backdrop-blur-3xl">
-              <div className="flex justify-between items-center px-2">
-                <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${step === 'map-corners' ? 'bg-indigo-500 animate-pulse shadow-[0_0_12px_rgba(99,102,241,1)]' : 'bg-emerald-500 animate-pulse shadow-[0_0_12px_rgba(16,185,129,1)]'}`} />
-                  <div>
-                    <h3 className="font-black text-white text-[13px] tracking-[0.2em] uppercase italic">
-                      {step === 'map-corners' ? 'Boundary Mapping' : 'Space Identification'}
-                    </h3>
-                    <p className="text-[10px] text-slate-500 font-bold tracking-widest uppercase">
-                      {step === 'map-corners' ? `Defining corners for ${activeFloor.name}` : `Tagging rooms within boundary`}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-[11px] font-black px-5 py-2 rounded-2xl bg-white/5 border border-white/10 text-slate-400 shadow-inner">
-                  {step === 'map-corners' ? activeFloor.corners.length : activeFloor.rooms.length} SAVED
-                </div>
+            {/* Room Type Selector */}
+            {step === 'tag-rooms' && (
+              <div className="flex gap-3 overflow-x-auto no-scrollbar py-2">
+                {ROOM_TYPES.map(type => (
+                  <button
+                    key={type}
+                    onClick={() => setSelectedRoomType(type)}
+                    className={`whitespace-nowrap px-8 py-5 rounded-[2rem] text-[11px] font-black border uppercase tracking-widest transition-all ${
+                      selectedRoomType === type ? 'bg-emerald-500 border-emerald-400 text-white shadow-[0_15px_30px_rgba(16,185,129,0.4)] scale-105' : 'bg-white/5 border-white/5 text-slate-500 hover:border-white/20'
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
               </div>
-              
-              {step === 'tag-rooms' && (
-                <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar px-2">
-                  {ROOM_TYPES.map(type => (
-                    <button
-                      key={type}
-                      onClick={() => setSelectedRoomType(type)}
-                      className={`whitespace-nowrap px-6 py-4 rounded-3xl text-[11px] font-black border transition-all uppercase tracking-widest ${
-                        selectedRoomType === type ? 'bg-emerald-500 border-emerald-400 text-white shadow-2xl scale-105' : 'bg-white/5 border-white/5 text-slate-500 hover:border-white/20'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              )}
+            )}
 
-              <div className="flex gap-4">
+            <div className="mt-auto space-y-6">
+              <div className="flex gap-5">
                 {!isDesktop && (
                   <button 
                     onClick={() => markPoint()}
-                    className={`flex-1 py-6 rounded-3xl font-black text-xs tracking-[0.3em] flex items-center justify-center space-x-4 shadow-2xl active:scale-95 transition-all uppercase ${
+                    className={`flex-1 py-7 rounded-[2rem] font-black text-[12px] uppercase tracking-[0.3em] flex items-center justify-center gap-5 transition-all shadow-2xl active:scale-95 ${
                       step === 'map-corners' ? 'bg-white text-black' : 'bg-emerald-500 text-white'
                     }`}
                   >
-                    <CameraIcon size={20} strokeWidth={3} />
-                    <span>Tag Marker</span>
+                    <CameraIcon size={24} />
+                    <span>Plot Node</span>
                   </button>
                 )}
 
                 {(activeFloor.corners.length > 0 || activeFloor.rooms.length > 0) && (
-                  <button onClick={removeLast} className="px-6 bg-slate-900 text-white rounded-3xl border border-white/10 active:scale-90 shadow-xl hover:bg-slate-800 transition-all">
-                    <Undo2 size={24} strokeWidth={2.5} />
-                  </button>
-                )}
-
-                {(step === 'map-corners' && activeFloor.corners.length >= 3) && (
                   <button 
-                    onClick={() => { setStep('tag-rooms'); if (!isDesktop) setShowLargeMap(false); }}
-                    className="px-10 bg-indigo-600 text-white rounded-3xl shadow-2xl active:scale-95 transition-all hover:bg-indigo-500 flex items-center justify-center"
+                    onClick={removeLast} 
+                    className="px-10 bg-slate-900 text-white rounded-[2rem] border border-white/10 active:scale-90 hover:bg-slate-800 transition-all shadow-xl group"
+                    title="Undo Last"
                   >
-                    <ChevronRightIcon size={32} strokeWidth={3} />
+                    <Undo2 size={28} className="group-hover:-rotate-45 transition-transform" />
                   </button>
                 )}
 
-                {(step === 'tag-rooms' && activeFloor.rooms.length >= 1) && (
+                {step === 'map-corners' && activeFloor.corners.length >= 3 && (
+                  <button 
+                    onClick={() => setStep('tag-rooms')}
+                    className="flex-1 px-12 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[2rem] font-black text-[12px] uppercase tracking-widest flex items-center justify-center gap-4 transition-all shadow-2xl active:scale-95"
+                  >
+                    Define Interiors <ChevronRightIcon size={28} />
+                  </button>
+                )}
+
+                {step === 'tag-rooms' && activeFloor.rooms.length >= 1 && (
                   <button 
                     onClick={handleAnalyze}
-                    className="px-10 bg-white text-black rounded-3xl shadow-2xl font-black text-[12px] tracking-widest active:scale-95 uppercase hover:bg-slate-100 transition-all"
+                    className="flex-1 px-12 bg-white hover:bg-slate-100 text-black rounded-[2rem] font-black text-[12px] uppercase tracking-widest transition-all shadow-[0_20px_40px_rgba(255,255,255,0.1)] active:scale-95"
                   >
-                    Generate Report
+                    Finalize Audit
                   </button>
                 )}
               </div>
               
-              {isDesktop && (
-                <p className="text-center text-[9px] text-slate-600 font-bold uppercase tracking-widest animate-pulse">
-                  Drawing Mode: Click on map to place architectural nodes
-                </p>
-              )}
+              <div className="flex justify-between items-center px-4">
+                 <div className="flex items-center gap-3 text-[10px] font-black text-slate-600 uppercase tracking-widest">
+                    <Info size={14} />
+                    {isDesktop ? 'Click map or drag nodes' : 'Align reticle and tap plot'}
+                 </div>
+                 <button onClick={reset} className="text-[10px] font-black text-red-500/50 hover:text-red-500 uppercase tracking-widest transition-colors">Abort Survey</button>
+              </div>
             </div>
           </div>
         </>
       )}
 
+      {/* Error HUD Overlay */}
       {error && (
-        <div className="absolute top-28 left-1/2 -translate-x-1/2 z-[100] w-full max-w-md px-6 animate-in fade-in slide-in-from-top-6">
-          <div className="bg-red-600 text-white p-5 rounded-3xl flex items-center justify-between shadow-2xl border border-red-500/50 backdrop-blur-xl">
-            <div className="flex items-center gap-4 text-xs font-black uppercase tracking-widest">
-              <AlertTriangle size={22} className="shrink-0" />
+        <div className="absolute top-40 left-1/2 -translate-x-1/2 z-[4000] w-full max-w-xl px-10 animate-in fade-in slide-in-from-top-20 duration-500">
+          <div className="bg-red-600 text-white p-8 rounded-[3rem] flex items-center justify-between shadow-[0_40px_80px_rgba(220,38,38,0.4)] border border-red-500 relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-white/20" />
+            <div className="flex items-center gap-6 font-black text-[11px] uppercase tracking-widest">
+              <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center shrink-0">
+                <AlertTriangle size={28} />
+              </div>
               <span>{error}</span>
             </div>
-            <button onClick={() => setError(null)} className="p-2 hover:bg-white/20 rounded-full transition-colors font-black">×</button>
+            <button 
+              onClick={() => setError(null)} 
+              className="w-10 h-10 rounded-full hover:bg-white/20 flex items-center justify-center font-black text-2xl transition-colors"
+            >
+              ×
+            </button>
           </div>
         </div>
       )}

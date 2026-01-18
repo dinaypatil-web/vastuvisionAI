@@ -10,11 +10,13 @@
   },
   "dependencies": {
     "@google/genai": "^1.37.0",
-    "react-dom": "^19.2.3",
     "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "lucide-react": "^0.562.0",
     "html2canvas": "1.4.1",
-    "jspdf": "2.5.1"
+    "jspdf": "2.5.1",
+    "leaflet": "1.9.4",
+    "react-leaflet": "4.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
